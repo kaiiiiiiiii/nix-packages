@@ -1,0 +1,88 @@
+name: Reusable - Build Packages
+
+on:
+  workflow_call:
+    inputs:
+      has_changes:
+        required: true
+        type: string
+      packages:
+        required: true
+        type: string
+      use_cachix:
+        required: false
+        type: boolean
+        default: false
+
+jobs:
+  build-x86:
+    name: Build ${{ matrix.package }} (x86_64)
+    runs-on: ubuntu-latest
+    if: inputs.has_changes == 'true' && inputs.packages != '[]'
+    strategy:
+      fail-fast: false
+      matrix:
+        package: ${{ fromJson(inputs.packages) }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@v30
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+            accept-flake-config = true
+
+      - name: Setup Cachix
+        if: inputs.use_cachix
+        uses: cachix/cachix-action@v15
+        with:
+          name: kaiiiiiiiii
+          authToken: '${{ secrets.CACHIX_AUTH_TOKEN }}'
+
+      - name: Build ${{ matrix.package }}
+        run: |
+          echo "Building packages.x86_64-linux.${{ matrix.package }}"
+          nix build .#packages.x86_64-linux.${{ matrix.package }} -L --print-build-logs
+
+      - name: Verify and show package info
+        run: |
+          nix path-info -rsSh .#packages.x86_64-linux.${{ matrix.package }}
+          echo "Package successfully built${{ inputs.use_cachix && ' and pushed to Cachix' || '' }}"
+
+  build-aarch64:
+    name: Build ${{ matrix.package }} (aarch64)
+    runs-on: ubuntu-24.04-arm
+    if: inputs.has_changes == 'true' && inputs.packages != '[]'
+    strategy:
+      fail-fast: false
+      matrix:
+        package: ${{ fromJson(inputs.packages) }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@v30
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+            accept-flake-config = true
+
+      - name: Setup Cachix
+        if: inputs.use_cachix
+        uses: cachix/cachix-action@v15
+        with:
+          name: kaiiiiiiiii
+          authToken: '${{ secrets.CACHIX_AUTH_TOKEN }}'
+
+      - name: Build ${{ matrix.package }}
+        run: |
+          echo "Building packages.aarch64-linux.${{ matrix.package }}"
+          nix build .#packages.aarch64-linux.${{ matrix.package }} -L --print-build-logs
+
+      - name: Verify and show package info
+        run: |
+          nix path-info -rsSh .#packages.aarch64-linux.${{ matrix.package }}
+          echo "Package successfully built${{ inputs.use_cachix && ' and pushed to Cachix' || '' }}"

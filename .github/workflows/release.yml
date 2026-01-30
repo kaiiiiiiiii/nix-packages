@@ -1,0 +1,70 @@
+name: Build and Publish (Release)
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'pkgs/**'
+      - 'flake.nix'
+      - 'flake.lock'
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  detect-changes:
+    uses: ./.github/workflows/_detect-changes.yml
+
+  flake-check:
+    needs: detect-changes
+    uses: ./.github/workflows/_flake-check.yml
+    with:
+      has_changes: ${{ needs.detect-changes.outputs.has_changes }}
+      use_cachix: true
+    secrets: inherit
+
+  build:
+    needs: [detect-changes, flake-check]
+    uses: ./.github/workflows/_build.yml
+    with:
+      has_changes: ${{ needs.detect-changes.outputs.has_changes }}
+      packages: ${{ needs.detect-changes.outputs.packages }}
+      use_cachix: true
+    secrets: inherit
+
+  publish-success:
+    name: Publish Success
+    runs-on: ubuntu-latest
+    needs:
+      - detect-changes
+      - flake-check
+      - build
+    if: always()
+    steps:
+      - name: Check all jobs passed
+        run: |
+          if [[ "${{ needs.detect-changes.outputs.has_changes }}" != "true" ]]; then
+            echo "✅ No package changes detected - skipping builds"
+            exit 0
+          fi
+
+          if [[ "${{ needs.flake-check.result }}" != "success" ]]; then
+            echo "❌ Flake check failed"
+            exit 1
+          fi
+
+          if [[ "${{ needs.detect-changes.outputs.packages }}" == "[]" ]]; then
+            echo "✅ No packages to build"
+            exit 0
+          fi
+
+          if [[ "${{ needs.build.result }}" != "success" ]]; then
+            echo "❌ Builds failed"
+            exit 1
+          fi
+
+          echo "✅ All builds passed and published to Cachix!"
+          echo "📦 Packages available at: https://kaiiiiiiiii.cachix.org"

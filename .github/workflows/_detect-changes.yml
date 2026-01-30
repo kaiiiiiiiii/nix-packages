@@ -1,0 +1,100 @@
+name: Reusable - Detect Changes
+
+on:
+  workflow_call:
+    outputs:
+      packages:
+        description: "JSON array of changed packages"
+        value: ${{ jobs.detect.outputs.packages }}
+      has_changes:
+        description: "Whether any packages changed"
+        value: ${{ jobs.detect.outputs.has_changes }}
+
+jobs:
+  detect:
+    name: Detect Changed Packages
+    runs-on: ubuntu-latest
+    outputs:
+      packages: ${{ steps.detect.outputs.packages }}
+      has_changes: ${{ steps.detect.outputs.has_changes }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Detect changed packages
+        id: detect
+        run: |
+          # Discover all packages from pkgs/ directory
+          PACKAGES=()
+          for dir in pkgs/*/; do
+            if [[ -d "$dir" ]]; then
+              pkg_name=$(basename "$dir")
+              PACKAGES+=("$pkg_name")
+            fi
+          done
+
+          if [[ ${#PACKAGES[@]} -eq 0 ]]; then
+            echo "No packages found in pkgs/"
+            echo 'packages=[]' >> $GITHUB_OUTPUT
+            echo 'has_changes=false' >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+          echo "Discovered packages: ${PACKAGES[*]}"
+
+          # For workflow_dispatch, build all packages
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            echo "Manual trigger - building all packages"
+            JSON_ARRAY=$(printf '%s\n' "${PACKAGES[@]}" | jq -R . | jq -sc .)
+            echo "packages=$JSON_ARRAY" >> $GITHUB_OUTPUT
+            echo 'has_changes=true' >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+          # Get the base ref for comparison
+          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+            BASE_SHA="${{ github.event.pull_request.base.sha }}"
+          else
+            BASE_SHA="${{ github.event.before }}"
+            if [[ "$BASE_SHA" == "0000000000000000000000000000000000000000" ]]; then
+              echo "Initial push - building all packages"
+              JSON_ARRAY=$(printf '%s\n' "${PACKAGES[@]}" | jq -R . | jq -sc .)
+              echo "packages=$JSON_ARRAY" >> $GITHUB_OUTPUT
+              echo 'has_changes=true' >> $GITHUB_OUTPUT
+              exit 0
+            fi
+          fi
+
+          echo "Comparing $BASE_SHA to ${{ github.sha }}"
+
+          CHANGED_FILES=$(git diff --name-only "$BASE_SHA" "${{ github.sha }}" 2>/dev/null || echo "")
+
+          # Check if flake.nix or flake.lock changed (rebuild all)
+          if echo "$CHANGED_FILES" | grep -qE '^flake\.(nix|lock)$'; then
+            echo "Flake files changed - building all packages"
+            JSON_ARRAY=$(printf '%s\n' "${PACKAGES[@]}" | jq -R . | jq -sc .)
+            echo "packages=$JSON_ARRAY" >> $GITHUB_OUTPUT
+            echo 'has_changes=true' >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+          # Detect which packages changed
+          CHANGED_PACKAGES=()
+          for pkg in "${PACKAGES[@]}"; do
+            if echo "$CHANGED_FILES" | grep -q "^pkgs/$pkg/"; then
+              CHANGED_PACKAGES+=("$pkg")
+            fi
+          done
+
+          if [[ ${#CHANGED_PACKAGES[@]} -eq 0 ]]; then
+            echo "No package changes detected"
+            echo 'packages=[]' >> $GITHUB_OUTPUT
+            echo 'has_changes=false' >> $GITHUB_OUTPUT
+          else
+            JSON_ARRAY=$(printf '%s\n' "${CHANGED_PACKAGES[@]}" | jq -R . | jq -sc .)
+            echo "Changed packages: $JSON_ARRAY"
+            echo "packages=$JSON_ARRAY" >> $GITHUB_OUTPUT
+            echo 'has_changes=true' >> $GITHUB_OUTPUT
+          fi
