@@ -58,12 +58,8 @@ buildNpmPackage (finalAttrs: {
   '';
 
   preBuild = ''
-    # Set database type for drizzle config
-    ${if databaseType == "sqlite" then ''
-      export DB_TYPE=sqlite
-    '' else ''
-      export DB_TYPE=pg
-    ''}
+    npm run set:oss
+    npm run set:${db true}
     
     npm run db:generate
   '';
