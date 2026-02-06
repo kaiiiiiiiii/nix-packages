@@ -45,7 +45,6 @@ buildNpmPackage (finalAttrs: {
   ];
 
   # Replace the googleapis.com Inter font with a local copy from Nixpkgs.
-  # Based on pkgs.nextjs-ollama-llm-ui.
   postPatch = ''
     substituteInPlace src/app/layout.tsx --replace-fail \
       "{ Geist, Inter, Manrope, Open_Sans } from \"next/font/google\"" \
@@ -59,16 +58,20 @@ buildNpmPackage (finalAttrs: {
   '';
 
   preBuild = ''
-    npm run set:oss
-    npm run set:${db true}
-    npx drizzle-kit generate --dialect ${db true} --schema ./server/db/${db false}/schema/ --name migration --out init
+    # Set database type for drizzle config
+    ${if databaseType == "sqlite" then ''
+      export DB_TYPE=sqlite
+      npm run db:sqlite:generate
+    '' else ''
+      export DB_TYPE=pg
+      npm run db:pg:generate
+    ''}
   '';
 
   buildPhase = ''
     runHook preBuild
 
-    npm run build:${db false} -- --no-lint
-    npm run build:cli
+    npm run build
 
     runHook postBuild
   '';
@@ -87,7 +90,10 @@ buildNpmPackage (finalAttrs: {
     cp -r public $out/share/pangolin/public
 
     cp -r dist $out/share/pangolin/dist
-    cp -r init $out/share/pangolin/dist/init
+    
+    if [ -d "init" ]; then
+      cp -r init $out/share/pangolin/dist/init
+    fi
 
     cp server/db/names.json $out/share/pangolin/dist/names.json
     cp server/db/ios_models.json $out/share/pangolin/dist/ios_models.json
@@ -114,8 +120,6 @@ buildNpmPackage (finalAttrs: {
           }
           // environmentVariables
         ))
-        # If we're running Pangolin, test if we have a .nix_skip_setup file in the public
-        # and .next directories. If we don't, clean them up and re-create them.
         + lib.optionalString isServer " --run '${
            (lib.concatMapStringsSep " && "
              (
@@ -130,8 +134,6 @@ buildNpmPackage (finalAttrs: {
                "node_modules"
              ]
            )
-           # Also deploy a small config (if none exists) and run the
-           # database migrations before running the server.
          } && test -f config/config.yml || { install -Dm600 ${defaultConfig} config/config.yml && { test -z $EDITOR && { echo \"Please edit $(pwd)/config/config.yml\" and run the server again. && exit 255; } || $EDITOR config/config.yml; }; } && command ${placeholder "out"}/bin/migrate-pangolin-database'";
     in
     lib.concatMapStrings
@@ -143,16 +145,12 @@ buildNpmPackage (finalAttrs: {
       )
       [
         {
-          mjs = "cli";
-          command = "pangctl";
+          mjs = "server";
+          command = "pangolin";
         }
         {
           mjs = "migrations";
           command = "migrate-pangolin-database";
-        }
-        {
-          mjs = "server";
-          command = "pangolin";
         }
       ];
 
@@ -169,5 +167,4 @@ buildNpmPackage (finalAttrs: {
     platforms = lib.platforms.linux;
     mainProgram = "pangolin";
   };
-  
 })
